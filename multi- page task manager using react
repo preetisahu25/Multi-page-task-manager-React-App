@@ -1,0 +1,841 @@
+import { useState, useEffect, useCallback } from "react";
+
+const STORAGE_KEY = "tm_tasks_v1";
+
+const initialTasks = [
+  { id: "1", title: "Design system audit", description: "Review all UI components for consistency across the product.", priority: "high", status: "active", created: "2026-03-20" },
+  { id: "2", title: "Write API documentation", description: "Document all public endpoints with examples and error codes.", priority: "medium", status: "completed", created: "2026-03-21" },
+  { id: "3", title: "Performance profiling", description: "Run Lighthouse audits and fix any issues above threshold.", priority: "high", status: "active", created: "2026-03-22" },
+  { id: "4", title: "Onboard new engineers", description: "Set up dev environments and walk through codebase.", priority: "low", status: "active", created: "2026-03-23" },
+  { id: "5", title: "Q1 retrospective", description: "Schedule and facilitate the retrospective meeting.", priority: "medium", status: "completed", created: "2026-03-24" },
+  { id: "6", title: "Fix login edge case", description: "Handle the SSO redirect loop on mobile browsers.", priority: "high", status: "active", created: "2026-03-25" },
+];
+
+// ─── Tiny router ────────────────────────────────────────────────
+function useRouter() {
+  const [path, setPath] = useState(window.location.pathname + window.location.search);
+
+  useEffect(() => {
+    const handler = () => setPath(window.location.pathname + window.location.search);
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, []);
+
+  const navigate = useCallback((to) => {
+    window.history.pushState({}, "", to);
+    setPath(to);
+  }, []);
+
+  const pathname = path.split("?")[0];
+  const search = path.includes("?") ? "?" + path.split("?")[1] : "";
+  const params = new URLSearchParams(search);
+
+  return { pathname, params, navigate };
+}
+
+// ─── Styles ─────────────────────────────────────────────────────
+const css = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f3ef;
+    --surface: #ffffff;
+    --surface-2: #f0ede7;
+    --border: #e2ddd6;
+    --border-strong: #c8c2b8;
+    --text: #1a1714;
+    --text-2: #6b6560;
+    --text-3: #a09890;
+    --accent: #c1440e;
+    --accent-2: #e8562212;
+    --accent-hover: #9e360b;
+    --nav-active-bg: #1a1714;
+    --nav-active-text: #f5f3ef;
+    --high: #c1440e;
+    --high-bg: #fdf0eb;
+    --medium: #8b6914;
+    --medium-bg: #fdf6e3;
+    --low: #2e6b3e;
+    --low-bg: #edf7f0;
+    --done-bg: #f0ede7;
+    --done-text: #a09890;
+    --tag-r: 4px;
+    --r: 10px;
+    --r-lg: 14px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+  }
+
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  /* Layout */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* Nav */
+  .nav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--shadow);
+  }
+  .nav-inner {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 56px;
+  }
+  .nav-brand {
+    font-family: 'DM Serif Display', serif;
+    font-size: 20px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    margin-right: 16px;
+    cursor: pointer;
+    text-decoration: none;
+    flex-shrink: 0;
+  }
+  .nav-brand span { color: var(--accent); }
+  .nav-links { display: flex; align-items: center; gap: 4px; }
+  .nav-link {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-2);
+    cursor: pointer;
+    border: none;
+    background: none;
+    transition: all 0.15s;
+    text-decoration: none;
+    display: inline-block;
+    font-family: inherit;
+  }
+  .nav-link:hover { background: var(--surface-2); color: var(--text); }
+  .nav-link.active {
+    background: var(--nav-active-bg);
+    color: var(--nav-active-text);
+  }
+  .nav-link.active:hover { background: #2d2a26; }
+
+  /* Main content */
+  .main { flex: 1; max-width: 900px; margin: 0 auto; width: 100%; padding: 40px 24px 64px; }
+
+  /* Page headers */
+  .page-header { margin-bottom: 32px; }
+  .page-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 32px;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+  .page-sub { color: var(--text-2); font-size: 15px; }
+
+  /* Home page */
+  .home-hero {
+    background: var(--nav-active-bg);
+    color: #f5f3ef;
+    border-radius: var(--r-lg);
+    padding: 48px 40px;
+    margin-bottom: 32px;
+    position: relative;
+    overflow: hidden;
+  }
+  .home-hero::before {
+    content: '';
+    position: absolute;
+    right: -60px; top: -60px;
+    width: 280px; height: 280px;
+    border-radius: 50%;
+    background: rgba(193,68,14,0.15);
+  }
+  .home-hero::after {
+    content: '';
+    position: absolute;
+    right: 40px; bottom: -40px;
+    width: 180px; height: 180px;
+    border-radius: 50%;
+    background: rgba(193,68,14,0.08);
+  }
+  .hero-eyebrow {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+  .hero-title {
+    font-family: 'DM Serif Display', serif;
+    font-size: 42px;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin-bottom: 16px;
+    position: relative; z-index: 1;
+  }
+  .hero-desc {
+    font-size: 16px;
+    color: #b8b0a6;
+    max-width: 460px;
+    position: relative; z-index: 1;
+    line-height: 1.65;
+    margin-bottom: 28px;
+  }
+  .hero-btn {
+    display: inline-block;
+    background: var(--accent);
+    color: white;
+    padding: 12px 28px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    font-family: inherit;
+    transition: background 0.15s, transform 0.1s;
+    position: relative; z-index: 1;
+  }
+  .hero-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .hero-btn:active { transform: translateY(0); }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 32px; }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 20px 20px 16px;
+    box-shadow: var(--shadow);
+  }
+  .stat-label { font-size: 12px; color: var(--text-3); font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .stat-value { font-family: 'DM Serif Display', serif; font-size: 36px; letter-spacing: -0.02em; }
+  .stat-value.red { color: var(--accent); }
+  .stat-value.green { color: var(--low); }
+  .stat-sub { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+
+  .quick-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .action-card {
+    flex: 1; min-width: 200px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: var(--shadow);
+  }
+  .action-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+  .action-icon { font-size: 24px; margin-bottom: 10px; }
+  .action-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  .action-desc { font-size: 13px; color: var(--text-2); }
+
+  /* Filter bar */
+  .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+  .filter-btn {
+    padding: 7px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .filter-btn:hover { border-color: var(--border-strong); color: var(--text); }
+  .filter-btn.active { background: var(--nav-active-bg); color: #f5f3ef; border-color: transparent; }
+  .filter-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.18);
+    color: inherit;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 6px;
+    font-family: 'DM Mono', monospace;
+  }
+  .filter-btn:not(.active) .filter-count { background: var(--surface-2); color: var(--text-3); }
+
+  .tasks-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .tasks-count { font-size: 13px; color: var(--text-3); font-family: 'DM Mono', monospace; }
+
+  /* Task cards */
+  .task-list { display: flex; flex-direction: column; gap: 10px; }
+  .task-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 18px 20px;
+    cursor: pointer;
+    transition: all 0.15s;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .task-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateX(2px); }
+  .task-card.done { opacity: 0.65; }
+  .task-card.done:hover { opacity: 0.85; }
+
+  .task-check {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    flex-shrink: 0;
+    margin-top: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+    background: none;
+  }
+  .task-check:hover { border-color: var(--accent); }
+  .task-check.checked { background: var(--low); border-color: var(--low); }
+  .task-check.checked::after { content: '✓'; font-size: 11px; color: white; font-weight: 700; }
+
+  .task-body { flex: 1; min-width: 0; }
+  .task-title { font-weight: 500; font-size: 15px; margin-bottom: 4px; }
+  .task-card.done .task-title { text-decoration: line-through; color: var(--text-3); }
+  .task-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .task-desc-preview { font-size: 13px; color: var(--text-2); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 500px; }
+
+  .badge {
+    display: inline-flex; align-items: center;
+    padding: 3px 9px;
+    border-radius: var(--tag-r);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge-high { background: var(--high-bg); color: var(--high); }
+  .badge-medium { background: var(--medium-bg); color: var(--medium); }
+  .badge-low { background: var(--low-bg); color: var(--low); }
+  .badge-done { background: var(--done-bg); color: var(--done-text); }
+  .badge-active { background: #eef3ff; color: #3354a4; }
+  .badge-id { background: var(--surface-2); color: var(--text-3); }
+
+  .task-date { font-size: 12px; color: var(--text-3); font-family: 'DM Mono', monospace; }
+  .task-arrow { color: var(--text-3); font-size: 18px; margin-left: 8px; align-self: center; flex-shrink: 0; transition: transform 0.15s; }
+  .task-card:hover .task-arrow { transform: translateX(3px); color: var(--text); }
+
+  .empty-state {
+    text-align: center;
+    padding: 64px 24px;
+    color: var(--text-3);
+  }
+  .empty-icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-title { font-family: 'DM Serif Display', serif; font-size: 22px; color: var(--text-2); margin-bottom: 8px; }
+  .empty-desc { font-size: 14px; }
+
+  /* Task detail */
+  .back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+    margin-bottom: 24px;
+    background: none;
+    border: none;
+    font-family: inherit;
+    padding: 0;
+    transition: color 0.15s;
+  }
+  .back-btn:hover { color: var(--text); }
+
+  .detail-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-md);
+  }
+  .detail-header {
+    background: var(--nav-active-bg);
+    color: #f5f3ef;
+    padding: 32px 32px 28px;
+  }
+  .detail-eyebrow { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .detail-id { font-family: 'DM Mono', monospace; font-size: 12px; color: #7a7268; }
+  .detail-title { font-family: 'DM Serif Display', serif; font-size: 28px; letter-spacing: -0.02em; margin-bottom: 16px; line-height: 1.25; }
+  .detail-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .detail-body { padding: 32px; }
+  .detail-section { margin-bottom: 28px; }
+  .detail-section:last-child { margin-bottom: 0; }
+  .detail-section-label { font-size: 11px; font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-3); margin-bottom: 8px; }
+  .detail-section-value { font-size: 15px; color: var(--text); line-height: 1.65; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .detail-actions { display: flex; gap: 10px; margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--border); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--surface-2); }
+  .btn-primary { background: var(--accent); color: white; border-color: transparent; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-success { background: var(--low); color: white; border-color: transparent; }
+  .btn-success:hover { background: #235530; }
+
+  /* About */
+  .about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 32px; }
+  .about-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 24px;
+    box-shadow: var(--shadow);
+  }
+  .about-card-icon { font-size: 28px; margin-bottom: 12px; }
+  .about-card-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .about-card-desc { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+  .about-hero {
+    background: var(--nav-active-bg);
+    color: #f5f3ef;
+    border-radius: var(--r-lg);
+    padding: 40px;
+    margin-bottom: 24px;
+  }
+  .about-hero h1 { font-family: 'DM Serif Display', serif; font-size: 30px; margin-bottom: 12px; }
+  .about-hero p { color: #b8b0a6; font-size: 15px; line-height: 1.7; max-width: 520px; }
+  .tech-stack { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .tech-tag {
+    padding: 5px 12px;
+    border-radius: var(--tag-r);
+    font-size: 12px;
+    font-family: 'DM Mono', monospace;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-2);
+  }
+
+  /* 404 */
+  .not-found {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 80px 24px;
+    flex: 1;
+  }
+  .not-found-code {
+    font-family: 'DM Serif Display', serif;
+    font-size: 96px;
+    color: var(--accent);
+    letter-spacing: -0.04em;
+    line-height: 1;
+    margin-bottom: 16px;
+  }
+  .not-found-title { font-family: 'DM Serif Display', serif; font-size: 26px; margin-bottom: 12px; }
+  .not-found-desc { color: var(--text-2); font-size: 15px; max-width: 380px; margin-bottom: 28px; }
+
+  /* Divider */
+  .divider { height: 1px; background: var(--border); margin: 24px 0; }
+
+  /* Toast */
+  .toast-wrap { position: fixed; bottom: 24px; right: 24px; z-index: 999; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .toast {
+    background: var(--nav-active-bg);
+    color: #f5f3ef;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    animation: slideIn 0.25s ease;
+    pointer-events: auto;
+  }
+  @keyframes slideIn { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+  @media (max-width: 600px) {
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .detail-grid { grid-template-columns: 1fr; }
+    .about-grid { grid-template-columns: 1fr; }
+    .hero-title { font-size: 30px; }
+    .main { padding: 24px 16px 48px; }
+  }
+`;
+
+// ─── Toast ───────────────────────────────────────────────────────
+function useToast() {
+  const [toasts, setToasts] = useState([]);
+  const show = useCallback((msg) => {
+    const id = Date.now();
+    setToasts(t => [...t, { id, msg }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 2800);
+  }, []);
+  return { toasts, show };
+}
+
+// ─── NavLink ─────────────────────────────────────────────────────
+function NavLink({ to, children, navigate, pathname }) {
+  const active = to === "/" ? pathname === "/" : pathname.startsWith(to);
+  return (
+    <span
+      className={`nav-link${active ? " active" : ""}`}
+      onClick={() => navigate(to)}
+    >{children}</span>
+  );
+}
+
+// ─── Pages ───────────────────────────────────────────────────────
+function HomePage({ tasks, navigate }) {
+  const active = tasks.filter(t => t.status === "active").length;
+  const done = tasks.filter(t => t.status === "completed").length;
+  const high = tasks.filter(t => t.priority === "high" && t.status === "active").length;
+
+  return (
+    <div>
+      <div className="home-hero">
+        <div className="hero-eyebrow">Task Manager · v1.0</div>
+        <div className="hero-title">Stay focused,<br />ship what matters.</div>
+        <p className="hero-desc">
+          A minimal task manager for people who care about clarity. Track tasks, filter by status, and never lose sight of priorities.
+        </p>
+        <button className="hero-btn" onClick={() => navigate("/tasks")}>
+          Open task board →
+        </button>
+      </div>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-label">Active</div>
+          <div className="stat-value red">{active}</div>
+          <div className="stat-sub">tasks in progress</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Completed</div>
+          <div className="stat-value green">{done}</div>
+          <div className="stat-sub">tasks finished</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">High priority</div>
+          <div className="stat-value">{high}</div>
+          <div className="stat-sub">need attention</div>
+        </div>
+      </div>
+
+      <div className="quick-actions">
+        <div className="action-card" onClick={() => navigate("/tasks?filter=active")}>
+          <div className="action-icon">🔥</div>
+          <div className="action-title">Active tasks</div>
+          <div className="action-desc">See everything still in progress</div>
+        </div>
+        <div className="action-card" onClick={() => navigate("/tasks?filter=completed")}>
+          <div className="action-icon">✅</div>
+          <div className="action-title">Completed tasks</div>
+          <div className="action-desc">Review what you've shipped</div>
+        </div>
+        <div className="action-card" onClick={() => navigate("/about")}>
+          <div className="action-icon">ℹ️</div>
+          <div className="action-title">About this app</div>
+          <div className="action-desc">Tech stack and feature overview</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TasksPage({ tasks, setTasks, navigate, params, showToast }) {
+  const filter = params.get("filter") || "all";
+
+  const filteredTasks = tasks.filter(t => {
+    if (filter === "active") return t.status === "active";
+    if (filter === "completed") return t.status === "completed";
+    if (filter === "high") return t.priority === "high";
+    return true;
+  });
+
+  const counts = {
+    all: tasks.length,
+    active: tasks.filter(t => t.status === "active").length,
+    completed: tasks.filter(t => t.status === "completed").length,
+    high: tasks.filter(t => t.priority === "high").length,
+  };
+
+  const toggleDone = (e, id) => {
+    e.stopPropagation();
+    setTasks(prev => prev.map(t => {
+      if (t.id !== id) return t;
+      const next = t.status === "completed" ? "active" : "completed";
+      showToast(next === "completed" ? "Task marked complete ✓" : "Task reopened");
+      return { ...t, status: next };
+    }));
+  };
+
+  const setFilter = (f) => navigate(f === "all" ? "/tasks" : `/tasks?filter=${f}`);
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1 className="page-title">Tasks</h1>
+        <p className="page-sub">Click a task to view details. Toggle the checkbox to complete it.</p>
+      </div>
+
+      <div className="filter-bar">
+        {["all", "active", "completed", "high"].map(f => (
+          <button
+            key={f}
+            className={`filter-btn${filter === f ? " active" : ""}`}
+            onClick={() => setFilter(f)}
+          >
+            {f.charAt(0).toUpperCase() + f.slice(1)}
+            <span className="filter-count">{counts[f]}</span>
+          </button>
+        ))}
+        {filter !== "all" && (
+          <span style={{ fontSize: 12, color: "var(--text-3)", fontFamily: "'DM Mono', monospace", marginLeft: 4 }}>
+            ?filter={filter}
+          </span>
+        )}
+      </div>
+
+      <div className="tasks-header">
+        <span className="tasks-count">{filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {filteredTasks.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">📭</div>
+          <div className="empty-title">No tasks here</div>
+          <div className="empty-desc">Try a different filter or check back later.</div>
+        </div>
+      ) : (
+        <div className="task-list">
+          {filteredTasks.map(task => (
+            <div
+              key={task.id}
+              className={`task-card${task.status === "completed" ? " done" : ""}`}
+              onClick={() => navigate(`/tasks/${task.id}`)}
+            >
+              <button
+                className={`task-check${task.status === "completed" ? " checked" : ""}`}
+                onClick={e => toggleDone(e, task.id)}
+                title={task.status === "completed" ? "Mark active" : "Mark complete"}
+              />
+              <div className="task-body">
+                <div className="task-title">{task.title}</div>
+                <div className="task-desc-preview">{task.description}</div>
+                <div className="task-meta">
+                  <span className={`badge badge-${task.priority}`}>{task.priority}</span>
+                  <span className={`badge badge-${task.status === "completed" ? "done" : "active"}`}>
+                    {task.status}
+                  </span>
+                  <span className="task-date">{task.created}</span>
+                </div>
+              </div>
+              <span className="task-arrow">→</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TaskDetailPage({ tasks, setTasks, navigate, id, showToast }) {
+  const task = tasks.find(t => t.id === id);
+
+  if (!task) {
+    return (
+      <div>
+        <button className="back-btn" onClick={() => navigate("/tasks")}>← Back to tasks</button>
+        <div className="not-found" style={{ padding: "40px 0" }}>
+          <div className="not-found-code" style={{ fontSize: 64 }}>404</div>
+          <div className="not-found-title">Task not found</div>
+          <div className="not-found-desc">No task with ID #{id} exists.</div>
+          <button className="btn btn-primary" onClick={() => navigate("/tasks")}>Back to tasks</button>
+        </div>
+      </div>
+    );
+  }
+
+  const toggle = () => {
+    setTasks(prev => prev.map(t => {
+      if (t.id !== task.id) return t;
+      const next = t.status === "completed" ? "active" : "completed";
+      showToast(next === "completed" ? "Marked as complete ✓" : "Task reopened");
+      return { ...t, status: next };
+    }));
+  };
+
+  return (
+    <div>
+      <button className="back-btn" onClick={() => navigate("/tasks")}>← Back to tasks</button>
+
+      <div className="detail-card">
+        <div className="detail-header">
+          <div className="detail-eyebrow">
+            <span className="badge badge-id" style={{ background: "rgba(255,255,255,0.08)", color: "#8a8278" }}>#{task.id}</span>
+          </div>
+          <div className="detail-title">{task.title}</div>
+          <div className="detail-badges">
+            <span className={`badge badge-${task.priority}`}>{task.priority} priority</span>
+            <span className={`badge badge-${task.status === "completed" ? "done" : "active"}`}>{task.status}</span>
+          </div>
+        </div>
+
+        <div className="detail-body">
+          <div className="detail-section">
+            <div className="detail-section-label">Description</div>
+            <div className="detail-section-value">{task.description}</div>
+          </div>
+
+          <div className="detail-grid">
+            <div className="detail-section">
+              <div className="detail-section-label">Created</div>
+              <div className="detail-section-value">{task.created}</div>
+            </div>
+            <div className="detail-section">
+              <div className="detail-section-label">Route</div>
+              <div className="detail-section-value" style={{ fontFamily: "'DM Mono', monospace", fontSize: 13 }}>/tasks/{task.id}</div>
+            </div>
+          </div>
+
+          <div className="detail-actions">
+            <button className={`btn ${task.status === "completed" ? "" : "btn-success"}`} onClick={toggle}>
+              {task.status === "completed" ? "↩ Reopen task" : "✓ Mark complete"}
+            </button>
+            <button className="btn" onClick={() => navigate("/tasks")}>← All tasks</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AboutPage() {
+  return (
+    <div>
+      <div className="about-hero">
+        <h1>About Task Manager</h1>
+        <p>A fully client-side task manager built with React, demonstrating multi-page routing, URL-based filters, active NavLink styling, and component-level state management — all without any dependencies beyond React itself.</p>
+      </div>
+
+      <div className="about-grid">
+        {[
+          { icon: "🗺️", title: "Client-side routing", desc: "Custom router using window.history.pushState and popstate events. No external library required." },
+          { icon: "🔗", title: "Active NavLinks", desc: "NavLink components compare current pathname to detect active state and apply highlight styles automatically." },
+          { icon: "🔍", title: "URL-based filters", desc: "Filter state lives in the URL as ?filter=active. Shareable, bookmarkable, and synced with browser history." },
+          { icon: "📄", title: "Dynamic task routes", desc: "Each task has its own URL at /tasks/:id. Deep-linking to a specific task just works." },
+          { icon: "🚫", title: "404 handling", desc: "Unknown routes gracefully render a 404 page instead of crashing or showing blank content." },
+          { icon: "💅", title: "CSS-in-JS", desc: "All styles live in a single CSS string injected via a <style> tag. No external stylesheets needed." },
+        ].map(c => (
+          <div className="about-card" key={c.title}>
+            <div className="about-card-icon">{c.icon}</div>
+            <div className="about-card-title">{c.title}</div>
+            <div className="about-card-desc">{c.desc}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 28 }}>
+        <div style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-3)", marginBottom: 10 }}>Tech stack</div>
+        <div className="tech-stack">
+          {["React 18", "useState", "useEffect", "useCallback", "CSS variables", "DM Serif Display", "DM Mono", "Outfit", "history.pushState", "URLSearchParams"].map(t => (
+            <span className="tech-tag" key={t}>{t}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotFoundPage({ navigate }) {
+  return (
+    <div className="not-found">
+      <div className="not-found-code">404</div>
+      <div className="not-found-title">Page not found</div>
+      <p className="not-found-desc">The page you're looking for doesn't exist or has been moved.</p>
+      <button className="btn btn-primary" onClick={() => navigate("/")}>Go home</button>
+    </div>
+  );
+}
+
+// ─── App ─────────────────────────────────────────────────────────
+export default function App() {
+  const [tasks, setTasks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || initialTasks; }
+    catch { return initialTasks; }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); } catch {}
+  }, [tasks]);
+
+  const { pathname, params, navigate } = useRouter();
+  const { toasts, show: showToast } = useToast();
+
+  // Inject CSS
+  useEffect(() => {
+    const el = document.createElement("style");
+    el.textContent = css;
+    document.head.appendChild(el);
+    return () => el.remove();
+  }, []);
+
+  const renderPage = () => {
+    if (pathname === "/") return <HomePage tasks={tasks} navigate={navigate} />;
+    if (pathname === "/tasks") return <TasksPage tasks={tasks} setTasks={setTasks} navigate={navigate} params={params} showToast={showToast} />;
+    if (pathname.startsWith("/tasks/")) {
+      const id = pathname.replace("/tasks/", "");
+      return <TaskDetailPage tasks={tasks} setTasks={setTasks} navigate={navigate} id={id} showToast={showToast} />;
+    }
+    if (pathname === "/about") return <AboutPage />;
+    return <NotFoundPage navigate={navigate} />;
+  };
+
+  return (
+    <div className="app">
+      <nav className="nav">
+        <div className="nav-inner">
+          <span className="nav-brand" onClick={() => navigate("/")}>
+            task<span>.</span>
+          </span>
+          <div className="nav-links">
+            <NavLink to="/" navigate={navigate} pathname={pathname}>Home</NavLink>
+            <NavLink to="/tasks" navigate={navigate} pathname={pathname}>Tasks</NavLink>
+            <NavLink to="/about" navigate={navigate} pathname={pathname}>About</NavLink>
+          </div>
+        </div>
+      </nav>
+
+      <main className="main">
+        {renderPage()}
+      </main>
+
+      <div className="toast-wrap">
+        {toasts.map(t => <div key={t.id} className="toast">{t.msg}</div>)}
+      </div>
+    </div>
+  );
+}
